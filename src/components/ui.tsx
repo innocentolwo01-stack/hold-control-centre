@@ -15,12 +15,10 @@ function classes(...values: Array<string | undefined>) {
 
 export function Button({
   className = '',
-  type = 'button',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
-      type={type}
       className={classes('button', className)}
       {...props}
     />
