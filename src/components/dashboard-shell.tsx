@@ -21,6 +21,7 @@ const items = [
   ['Code inventory', '/dashboard/codes', Boxes],
   ['Integrations', '/dashboard/integrations', Webhook],
   ['Redemptions', '/dashboard/redemptions', TicketCheck],
+  ['Offer activity', '/dashboard/offer-activity', TicketCheck],
   ['Notifications', '/dashboard/notifications', Bell],
   ['Merchant scanner', '/dashboard/scanner', ScanLine],
   ['Bulk actions', '/dashboard/bulk', ListChecks],
