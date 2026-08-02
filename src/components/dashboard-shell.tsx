@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Activity, BarChart3, Bell, Boxes, Building2, CalendarRange, CircleDollarSign, Gift, LayoutDashboard,
-  ListChecks, LogOut, ScanLine, Settings, ShieldCheck, Tags, TicketCheck, Users, Webhook,
+  ListChecks, LogOut, MapPinned, ScanLine, Settings, ShieldCheck, Tags, TicketCheck, Users, Webhook,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { ReactNode } from 'react';
@@ -15,6 +15,7 @@ const items = [
   ['Analytics', '/dashboard/analytics', BarChart3],
   ['Users', '/dashboard/users', Users],
   ['Partners', '/dashboard/partners', Building2],
+  ['Store locations', '/dashboard/store-locations', MapPinned],
   ['Rewards', '/dashboard/rewards', Gift],
   ['Coupons', '/dashboard/coupons', Tags],
   ['Campaigns', '/dashboard/campaigns', CalendarRange],

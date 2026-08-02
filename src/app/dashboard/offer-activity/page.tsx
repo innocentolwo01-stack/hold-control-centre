@@ -61,6 +61,15 @@ type OfferEvent = {
   redemption_id?: string | null;
   click_id?: string | null;
   partner_reference?: string | null;
+  merchant_location_id?: string | null;
+  merchant_location_name?: string | null;
+  merchant_location_address?: string | null;
+  merchant_location_city?: string | null;
+  merchant_location_postcode?: string | null;
+  merchant_location_country_code?: string | null;
+  website_name?: string | null;
+  website_domain?: string | null;
+  website_url?: string | null;
   utm_source?: string | null;
   utm_medium?: string | null;
   utm_campaign?: string | null;
@@ -196,6 +205,51 @@ function channelTone(channel: OfferEvent['channel']) {
   if (channel === 'in_store') return 'good';
   if (channel === 'online') return 'info';
   return 'neutral';
+}
+
+function redemptionDestination(row: OfferEvent) {
+  if (row.channel === 'in_store') {
+    return {
+      title:
+        row.merchant_location_name ||
+        'Unassigned store branch',
+      detail: [
+        row.merchant_location_address,
+        row.merchant_location_city,
+        row.merchant_location_postcode,
+        row.merchant_location_country_code,
+      ]
+        .filter(Boolean)
+        .join(', ') || 'No branch address recorded',
+      url: null,
+    };
+  }
+
+  if (row.channel === 'online') {
+    return {
+      title:
+        row.website_name ||
+        row.website_domain ||
+        'Unknown website',
+      detail:
+        row.website_domain ||
+        row.website_url ||
+        row.destination_url ||
+        'No website recorded',
+      url:
+        row.website_url ||
+        row.destination_url ||
+        row.tagged_url ||
+        null,
+    };
+  }
+
+  return {
+    title: 'Unknown destination',
+    detail:
+      'This legacy record did not identify a store or website.',
+    url: null,
+  };
 }
 
 function csvCell(value: unknown) {
@@ -363,8 +417,10 @@ export default function OfferActivityPage() {
       'Partner',
       'Action',
       'Channel',
-      'City',
-      'Country',
+      'Store or website',
+      'Store address or website domain',
+      'User city',
+      'User country',
       'Platform',
       'Device',
       'Points',
@@ -393,6 +449,8 @@ export default function OfferActivityPage() {
           row.partner_name || '',
           eventLabel(row),
           row.channel,
+          redemptionDestination(row).title,
+          redemptionDestination(row).detail,
           row.city || '',
           row.country || '',
           row.platform || '',
@@ -710,7 +768,8 @@ export default function OfferActivityPage() {
                   <th>Reward or coupon</th>
                   <th>Action</th>
                   <th>Channel</th>
-                  <th>Where</th>
+                  <th>Store or website</th>
+                  <th>User location</th>
                   <th>Device</th>
                   <th>Points</th>
                   <th>UTM attribution</th>
@@ -764,6 +823,49 @@ export default function OfferActivityPage() {
                           ? 'In-store'
                           : titleCase(row.channel)}
                       </Badge>
+                    </td>
+
+                    <td>
+                      {(() => {
+                        const destination =
+                          redemptionDestination(row);
+
+                        return (
+                          <div>
+                            <strong>
+                              {destination.title}
+                            </strong>
+                            <br />
+                            <small className="muted">
+                              {destination.detail}
+                            </small>
+
+                            {destination.url ? (
+                              <>
+                                <br />
+                                <a
+                                  href={destination.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  style={{
+                                    display:
+                                      'inline-flex',
+                                    alignItems:
+                                      'center',
+                                    gap: 5,
+                                    marginTop: 5,
+                                  }}
+                                >
+                                  <ExternalLink
+                                    size={13}
+                                  />
+                                  Open website
+                                </a>
+                              </>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     <td>
