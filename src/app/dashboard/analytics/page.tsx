@@ -26,6 +26,10 @@ import {
   Select,
 } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
+import {
+  LiveUserMap,
+  type LiveMapPoint,
+} from '@/components/live-user-map';
 
 type Summary = {
   live_users: number;
@@ -308,6 +312,8 @@ export default function AnalyticsPage() {
   const [users, setUsers] = useState<LiveUser[]>([]);
   const [activity, setActivity] =
     useState<ActivityRow[]>([]);
+  const [mapPoints, setMapPoints] =
+    useState<LiveMapPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -324,6 +330,7 @@ export default function AnalyticsPage() {
       snapshotResult,
       usersResult,
       activityResult,
+      mapResult,
     ] = await Promise.all([
       supabase.rpc('admin_analytics_snapshot', {
         p_from: from.toISOString(),
@@ -336,12 +343,16 @@ export default function AnalyticsPage() {
       supabase.rpc('admin_recent_user_activity', {
         p_limit: 200,
       }),
+      supabase.rpc('admin_live_map_points', {
+        p_live_minutes: 3,
+      }),
     ]);
 
     const firstError = [
       snapshotResult.error,
       usersResult.error,
       activityResult.error,
+      mapResult.error,
     ].find(Boolean);
 
     if (firstError) {
@@ -363,6 +374,13 @@ export default function AnalyticsPage() {
     if (!activityResult.error) {
       setActivity(
         (activityResult.data as ActivityRow[] | null) ??
+          [],
+      );
+    }
+
+    if (!mapResult.error) {
+      setMapPoints(
+        (mapResult.data as LiveMapPoint[] | null) ??
           [],
       );
     }
@@ -598,6 +616,11 @@ export default function AnalyticsPage() {
           ),
         )}
       </div>
+
+      <LiveUserMap
+        points={mapPoints}
+        loading={loading}
+      />
 
       <div
         className="grid three"
