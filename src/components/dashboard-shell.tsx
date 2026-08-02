@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  Activity, Bell, Boxes, Building2, CalendarRange, CircleDollarSign, Gift, LayoutDashboard,
-  LogOut, ScanLine, Settings, ShieldCheck, TicketCheck, Users, Webhook,
+  Activity, Bell, Boxes, Building2, CalendarRange, CircleDollarSign, CreditCard, Gift, LayoutDashboard,
+  ListChecks, LogOut, ScanLine, Settings, ShieldAlert, ShieldCheck, TicketCheck, Users, Webhook,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { ReactNode } from 'react';
@@ -12,6 +12,9 @@ import type { ReactNode } from 'react';
 const items = [
   ['Overview', '/dashboard', LayoutDashboard],
   ['Users', '/dashboard/users', Users],
+  ['Memberships', '/dashboard/memberships', CreditCard],
+  ['Risk Centre', '/dashboard/risk', ShieldAlert],
+  ['Bulk operations', '/dashboard/bulk', ListChecks],
   ['Partners', '/dashboard/partners', Building2],
   ['Rewards', '/dashboard/rewards', Gift],
   ['Campaigns', '/dashboard/campaigns', CalendarRange],
