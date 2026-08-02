@@ -1,563 +1,302 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import {
-  CheckSquare,
-  RefreshCw,
-  Users,
-} from 'lucide-react';
+import { LoaderCircle, Search } from 'lucide-react';
 
 import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  Field,
-  Input,
-  PageHeader,
-  Select,
-} from '@/components/ui';
+  BulkActionBar,
+  LifecycleTabs,
+  contentBulkActions,
+  deletedBulkActions,
+  userBulkActions,
+  type LifecycleView,
+} from '@/components/bulk-management';
+import { Badge, Card, EmptyState, Input, PageHeader } from '@/components/ui';
 import { formatDate, titleCase } from '@/lib/format';
-import { invokeAdmin } from '@/lib/admin-control';
 import { supabase } from '@/lib/supabase';
 
-type AuthUser = {
-  id: string;
-  email?: string | null;
-  phone?: string | null;
-};
+type EntityType = 'user' | 'partner' | 'reward' | 'coupon' | 'campaign';
 
-type Profile = {
+type AdminRow = {
   id: string;
-  display_name?: string | null;
-  account_status?: string | null;
-};
-
-type Subscription = {
-  user_id: string;
-  plan: string;
+  title: string;
+  subtitle: string;
+  detail: string;
   status: string;
+  updatedAt?: string | null;
+  deletedAt?: string | null;
 };
 
-type UserResponse = {
-  users?: AuthUser[];
-  profiles?: Profile[];
-  subscriptions?: Subscription[];
+const entityLabels: Record<EntityType, string> = {
+  user: 'Users',
+  partner: 'Partners',
+  reward: 'Rewards',
+  coupon: 'Coupons',
+  campaign: 'Campaigns',
 };
 
-type BulkHistory = {
-  id: string;
-  action_type: string;
-  status: string;
-  target_count: number;
-  success_count: number;
-  failure_count: number;
-  reason: string;
-  created_at: string;
-  completed_at?: string | null;
-};
+function initialEntity(): EntityType {
+  if (typeof window === 'undefined') return 'user';
+  const requested = new URLSearchParams(window.location.search).get('entity');
+  return requested && requested in entityLabels ? (requested as EntityType) : 'user';
+}
 
-type UserRow = {
-  user: AuthUser;
-  profile?: Profile;
-  subscription?: Subscription;
-};
+function lifecycleGroup(row: AdminRow): Exclude<LifecycleView, 'all'> {
+  if (row.deletedAt) return 'deleted';
+  if (row.status === 'active') return 'active';
+  if (row.status === 'draft') return 'draft';
+  return 'archived';
+}
 
-export default function BulkOperationsPage() {
-  const [users, setUsers] = useState<AuthUser[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [history, setHistory] = useState<BulkHistory[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [action, setAction] = useState('set_plan');
-  const [plan, setPlan] = useState('plus');
-  const [subscriptionStatus, setSubscriptionStatus] =
-    useState('active');
-  const [pointsDelta, setPointsDelta] = useState('100');
-  const [reason, setReason] = useState('');
+function statusTone(status: string) {
+  if (status === 'active') return 'good';
+  if (status === 'suspended' || status === 'paused' || status === 'scheduled') return 'warn';
+  if (status === 'closed' || status === 'ended' || status === 'archived') return 'neutral';
+  return 'info';
+}
+
+export default function BulkManagementPage() {
+  const [entity, setEntity] = useState<EntityType>('user');
+  const [view, setView] = useState<LifecycleView>('all');
+  const [rows, setRows] = useState<AdminRow[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    setEntity(initialEntity());
+  }, []);
 
   async function load() {
     setLoading(true);
     setError('');
 
-    try {
-      const [response, historyResult] = await Promise.all([
-        invokeAdmin<UserResponse>({
-          action: 'list_users',
-          page: 1,
-          perPage: 100,
-        }),
-        supabase
-          .from('bulk_operations')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(50),
-      ]);
-
-      setUsers(response.users ?? []);
-      setProfiles(response.profiles ?? []);
-      setSubscriptions(response.subscriptions ?? []);
-
-      if (historyResult.error) {
-        throw historyResult.error;
+    if (entity === 'user') {
+      const { data, error: loadError } = await supabase.rpc('admin_list_users');
+      if (loadError) {
+        setError(loadError.message);
+        setRows([]);
+      } else {
+        const userRows = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+          id: String(row.id),
+          title: String(row.display_name || row.email || 'Focus user'),
+          subtitle: String(row.email || row.username || 'No email available'),
+          detail: `${titleCase(String(row.plan || 'free'))} plan · ${titleCase(String(row.profile_role || 'adult'))}`,
+          status: String(row.account_status || 'active'),
+          updatedAt: row.updated_at ? String(row.updated_at) : null,
+          deletedAt: row.deleted_at ? String(row.deleted_at) : null,
+        }));
+        setRows(userRows);
       }
-
-      setHistory((historyResult.data as BulkHistory[]) ?? []);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : 'Unable to load bulk operations.',
-      );
-    } finally {
       setLoading(false);
+      return;
     }
+
+    const table = entity === 'campaign' ? 'campaigns' : entity === 'partner' ? 'partners' : 'rewards';
+    let query = supabase.from(table).select('*').order('created_at', { ascending: false });
+
+    if (entity === 'coupon') query = query.eq('offer_type', 'coupon');
+    if (entity === 'reward') query = query.neq('offer_type', 'coupon');
+
+    const { data, error: loadError } = await query;
+
+    if (loadError) {
+      setError(loadError.message);
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
+    const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+      const title = String(row.app_display_name || row.name || 'Untitled');
+      const partnerText = row.partner_id ? `Partner ${String(row.partner_id).slice(0, 8)}` : 'Hold managed';
+      const detail = entity === 'partner'
+        ? String(row.contact_email || row.website_url || 'No commercial contact')
+        : entity === 'campaign'
+          ? `${titleCase(String(row.campaign_type || 'campaign'))} · ${titleCase(String(row.minimum_plan || 'free'))}`
+          : `${Number(row.points_cost || 0)} points · ${titleCase(String(row.redemption_method || 'manual'))}`;
+
+      return {
+        id: String(row.id),
+        title,
+        subtitle: entity === 'partner' ? String(row.short_description || partnerText) : String(row.short_description || row.description || partnerText),
+        detail,
+        status: String(row.status || 'draft'),
+        updatedAt: row.updated_at ? String(row.updated_at) : row.created_at ? String(row.created_at) : null,
+        deletedAt: row.deleted_at ? String(row.deleted_at) : null,
+      } satisfies AdminRow;
+    });
+
+    setRows(mapped);
+    setLoading(false);
   }
 
   useEffect(() => {
+    setSelected(new Set());
+    setView('all');
+    setSearch('');
     void load();
-  }, []);
+    // load is intentionally tied to the selected entity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity]);
 
-  const profileMap = useMemo(
-    () => new Map(profiles.map((profile) => [profile.id, profile])),
-    [profiles],
-  );
+  const counts = useMemo<Record<LifecycleView, number>>(() => {
+    const result: Record<LifecycleView, number> = {
+      all: 0,
+      active: 0,
+      draft: 0,
+      archived: 0,
+      deleted: 0,
+    };
 
-  const subscriptionMap = useMemo(
-    () =>
-      new Map(
-        subscriptions.map((subscription) => [
-          subscription.user_id,
-          subscription,
-        ]),
-      ),
-    [subscriptions],
-  );
+    rows.forEach((row) => {
+      const group = lifecycleGroup(row);
+      result[group] += 1;
+      if (group !== 'deleted') result.all += 1;
+    });
 
-  const rows = useMemo<UserRow[]>(
-    () =>
-      users.map((user) => ({
-        user,
-        profile: profileMap.get(user.id),
-        subscription: subscriptionMap.get(user.id),
-      })),
-    [users, profileMap, subscriptionMap],
-  );
+    return result;
+  }, [rows]);
 
-  function toggleUser(userId: string) {
-    setSelectedIds((current) =>
-      current.includes(userId)
-        ? current.filter((id) => id !== userId)
-        : [...current, userId],
-    );
+  const visibleRows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      const group = lifecycleGroup(row);
+      const matchesView = view === 'all' ? group !== 'deleted' : group === view;
+      const matchesSearch = !term || `${row.title} ${row.subtitle} ${row.detail} ${row.status}`.toLowerCase().includes(term);
+      return matchesView && matchesSearch;
+    });
+  }, [rows, search, view]);
+
+  const visibleIds = visibleRows.map((row) => row.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const selectedIds = Array.from(selected);
+  const actions = view === 'deleted'
+    ? deletedBulkActions
+    : entity === 'user'
+      ? userBulkActions
+      : contentBulkActions;
+
+  function changeEntity(next: EntityType) {
+    setEntity(next);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('entity', next);
+      window.history.replaceState({}, '', url);
+    }
+  }
+
+  function toggleRow(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function toggleAll() {
-    setSelectedIds((current) =>
-      current.length === rows.length
-        ? []
-        : rows.map((row) => row.user.id),
-    );
+    setSelected((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
   }
 
-  async function runOperation() {
-    if (selectedIds.length === 0) {
-      setError('Select at least one user.');
-      return;
-    }
-
-    if (!reason.trim()) {
-      setError('A reason is required for every bulk action.');
-      return;
-    }
-
-    if (
-      action === 'adjust_points' &&
-      Math.trunc(Number(pointsDelta)) === 0
-    ) {
-      setError('Enter a non-zero points adjustment.');
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Apply ${action.replaceAll('_', ' ')} to ${
-        selectedIds.length
-      } selected users?`,
-    );
-
-    if (!confirmed) return;
-
-    setProcessing(true);
-    setError('');
-    setSuccess('');
-
-    const parameters =
-      action === 'set_plan'
-        ? { plan, status: subscriptionStatus }
-        : action === 'adjust_points'
-          ? { delta: Math.trunc(Number(pointsDelta)) }
-          : { status: action === 'suspend' ? 'suspended' : 'active' };
-
-    const insertResult = await supabase
-      .from('bulk_operations')
-      .insert({
-        action_type: action,
-        status: 'processing',
-        target_count: selectedIds.length,
-        reason: reason.trim(),
-        parameters,
-      })
-      .select('id')
-      .single();
-
-    if (insertResult.error) {
-      setError(insertResult.error.message);
-      setProcessing(false);
-      return;
-    }
-
-    const operationId = String(insertResult.data.id);
-    let successes = 0;
-    const failures: Array<{ userId: string; error: string }> = [];
-
-    for (const userId of selectedIds) {
-      try {
-        if (action === 'set_plan') {
-          await invokeAdmin({
-            action: 'set_subscription',
-            userId,
-            plan,
-            status: subscriptionStatus,
-            currentPeriodEnd: null,
-            reason: reason.trim(),
-          });
-        } else if (action === 'adjust_points') {
-          await invokeAdmin({
-            action: 'adjust_points',
-            userId,
-            delta: Math.trunc(Number(pointsDelta)),
-            reason: reason.trim(),
-          });
-        } else {
-          await invokeAdmin({
-            action: 'set_account_status',
-            userId,
-            status: action === 'suspend' ? 'suspended' : 'active',
-            reason: reason.trim(),
-          });
-        }
-
-        successes += 1;
-      } catch (operationError) {
-        failures.push({
-          userId,
-          error:
-            operationError instanceof Error
-              ? operationError.message
-              : 'Unknown failure',
-        });
-      }
-    }
-
-    const finalStatus =
-      failures.length === 0
-        ? 'completed'
-        : successes === 0
-          ? 'failed'
-          : 'partially_failed';
-
-    await supabase
-      .from('bulk_operations')
-      .update({
-        status: finalStatus,
-        success_count: successes,
-        failure_count: failures.length,
-        result_summary: { failures },
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', operationId);
-
-    setProcessing(false);
-    setSelectedIds([]);
-    setReason('');
-    setSuccess(
-      `${successes} users updated. ${failures.length} failed.`,
-    );
-
-    await load();
+  function changeView(next: LifecycleView) {
+    setView(next);
+    setSelected(new Set());
   }
 
   return (
     <>
       <PageHeader
-        title="Bulk Operations"
-        description="Apply controlled membership, points and account-access actions to selected users with full audit reasons and operation history."
-        actions={
-          <Button
-            type="button"
-            className="secondary"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            <RefreshCw size={16} />
-            Refresh
-          </Button>
-        }
+        title="Bulk management"
+        description="Select records across users, partners, rewards, coupons and campaigns, then activate, publish, draft, archive, delete, restore or permanently delete them in one controlled operation."
       />
 
-      {error ? <p className="error">{error}</p> : null}
-      {success ? <p className="success">{success}</p> : null}
-
-      <div className="grid two">
-        <Card>
-          <div className="stat">
-            <div className="stat-icon">
-              <CheckSquare size={20} />
-            </div>
-            <div>
-              <strong>{selectedIds.length}</strong>
-              <span>Selected users</span>
-            </div>
-          </div>
-
-          <div className="form-grid" style={{ marginTop: 18 }}>
-            <Field label="Bulk action">
-              <Select
-                value={action}
-                onChange={(event) => setAction(event.target.value)}
-              >
-                <option value="set_plan">Set membership plan</option>
-                <option value="adjust_points">Adjust points</option>
-                <option value="suspend">Suspend accounts</option>
-                <option value="reactivate">Reactivate accounts</option>
-              </Select>
-            </Field>
-
-            {action === 'set_plan' ? (
-              <>
-                <Field label="Plan">
-                  <Select
-                    value={plan}
-                    onChange={(event) => setPlan(event.target.value)}
-                  >
-                    <option value="free">Free</option>
-                    <option value="plus">Plus</option>
-                    <option value="premium">Premium</option>
-                    <option value="family">Family</option>
-                  </Select>
-                </Field>
-                <Field label="Subscription status">
-                  <Select
-                    value={subscriptionStatus}
-                    onChange={(event) =>
-                      setSubscriptionStatus(event.target.value)
-                    }
-                  >
-                    <option value="trialing">Trialing</option>
-                    <option value="active">Active</option>
-                    <option value="paused">Paused</option>
-                    <option value="cancelled">Cancelled</option>
-                    <option value="expired">Expired</option>
-                  </Select>
-                </Field>
-              </>
-            ) : null}
-
-            {action === 'adjust_points' ? (
-              <Field
-                label="Points adjustment"
-                hint="Use a negative number to deduct points."
-              >
-                <Input
-                  type="number"
-                  value={pointsDelta}
-                  onChange={(event) =>
-                    setPointsDelta(event.target.value)
-                  }
-                />
-              </Field>
-            ) : null}
-
-            <Field
-              label="Required reason"
-              hint="This reason is written to every affected user's audit history."
-            >
-              <Input
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="Campaign credit, support correction…"
-              />
-            </Field>
-          </div>
-
-          <div className="form-actions">
-            <Button
+      <Card className="bulk-manager-card">
+        <div className="entity-tabs" role="tablist" aria-label="Management area">
+          {(Object.keys(entityLabels) as EntityType[]).map((item) => (
+            <button
+              key={item}
               type="button"
-              disabled={processing || selectedIds.length === 0}
-              onClick={() => void runOperation()}
+              role="tab"
+              aria-selected={entity === item}
+              className={entity === item ? 'active' : ''}
+              onClick={() => changeEntity(item)}
             >
-              Apply to {selectedIds.length} users
-            </Button>
-          </div>
-        </Card>
+              {entityLabels[item]}
+            </button>
+          ))}
+        </div>
 
-        <Card>
-          <div className="stat">
-            <div className="stat-icon">
-              <Users size={20} />
-            </div>
-            <div>
-              <strong>{rows.length}</strong>
-              <span>Loaded users</span>
-            </div>
-          </div>
-          <p className="muted" style={{ marginTop: 14 }}>
-            Bulk actions process each account separately. One failed
-            record does not silently cancel successful changes for the
-            remaining users.
-          </p>
-        </Card>
-      </div>
+        <LifecycleTabs value={view} onChange={changeView} counts={counts} />
 
-      <Card style={{ marginTop: 18 }}>
+        <div className="bulk-search-row">
+          <div className="bulk-search">
+            <Search size={17} />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={`Search ${entityLabels[entity].toLowerCase()}`}
+            />
+          </div>
+          <span>{visibleRows.length} shown</span>
+        </div>
+
+        <BulkActionBar
+          entityType={entity}
+          noun={entity === 'user' ? 'user' : entity}
+          selectedIds={selectedIds}
+          visibleCount={visibleRows.length}
+          allVisibleSelected={allVisibleSelected}
+          actions={actions}
+          onToggleAll={toggleAll}
+          onClear={() => setSelected(new Set())}
+          onComplete={load}
+        />
+
         {loading ? (
-          <div className="empty-state">
-            <strong>Loading users…</strong>
-          </div>
-        ) : rows.length === 0 ? (
-          <EmptyState
-            title="No users loaded"
-            body="Refresh the page to load eligible accounts."
-          />
+          <div className="bulk-loading"><LoaderCircle className="spin-icon" size={26} /> Loading records…</div>
+        ) : error ? (
+          <p className="error">{error}</p>
+        ) : visibleRows.length === 0 ? (
+          <EmptyState title="No matching records" body="Change the status tab or search term to see other records." />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap bulk-table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>
-                    <input
-                      type="checkbox"
-                      checked={
-                        rows.length > 0 &&
-                        selectedIds.length === rows.length
-                      }
-                      onChange={toggleAll}
-                      aria-label="Select all loaded users"
-                    />
-                  </th>
-                  <th>User</th>
-                  <th>Plan</th>
-                  <th>Subscription</th>
-                  <th>Account status</th>
+                  <th className="selection-cell">Select</th>
+                  <th>Record</th>
+                  <th>Status</th>
+                  <th>Details</th>
+                  <th>Updated</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr key={row.user.id}>
-                    <td>
+                {visibleRows.map((row) => (
+                  <tr key={row.id} className={selected.has(row.id) ? 'selected-row' : ''}>
+                    <td className="selection-cell">
                       <input
                         type="checkbox"
-                        checked={selectedIds.includes(row.user.id)}
-                        onChange={() => toggleUser(row.user.id)}
-                        aria-label={`Select ${
-                          row.profile?.display_name ||
-                          row.user.email ||
-                          row.user.id
-                        }`}
+                        checked={selected.has(row.id)}
+                        onChange={() => toggleRow(row.id)}
+                        aria-label={`Select ${row.title}`}
                       />
                     </td>
                     <td>
-                      <strong>
-                        {row.profile?.display_name ||
-                          row.user.email ||
-                          row.user.phone ||
-                          'Unnamed user'}
-                      </strong>
-                      <br />
-                      <span className="muted">
-                        {row.user.email || row.user.id}
-                      </span>
+                      <strong className="record-title">{row.title}</strong>
+                      <span className="record-subtitle">{row.subtitle}</span>
                     </td>
                     <td>
-                      <Badge tone="neutral">
-                        {titleCase(
-                          row.subscription?.plan ?? 'free',
-                        )}
-                      </Badge>
+                      <Badge tone={statusTone(row.status)}>{row.deletedAt ? 'Deleted' : titleCase(row.status)}</Badge>
                     </td>
-                    <td>
-                      {titleCase(
-                        row.subscription?.status ?? 'active',
-                      )}
-                    </td>
-                    <td>
-                      <Badge
-                        tone={
-                          row.profile?.account_status === 'suspended'
-                            ? 'bad'
-                            : 'good'
-                        }
-                      >
-                        {titleCase(
-                          row.profile?.account_status ?? 'active',
-                        )}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <Card style={{ marginTop: 18 }}>
-        <h2>Operation history</h2>
-        {history.length === 0 ? (
-          <EmptyState
-            title="No bulk operations"
-            body="Completed bulk actions will appear here."
-          />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Action</th>
-                  <th>Status</th>
-                  <th>Targets</th>
-                  <th>Successful</th>
-                  <th>Failed</th>
-                  <th>Reason</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((operation) => (
-                  <tr key={operation.id}>
-                    <td>{titleCase(operation.action_type)}</td>
-                    <td>
-                      <Badge
-                        tone={
-                          operation.status === 'completed'
-                            ? 'good'
-                            : operation.status === 'failed'
-                              ? 'bad'
-                              : 'warn'
-                        }
-                      >
-                        {titleCase(operation.status)}
-                      </Badge>
-                    </td>
-                    <td>{operation.target_count}</td>
-                    <td>{operation.success_count}</td>
-                    <td>{operation.failure_count}</td>
-                    <td>{operation.reason}</td>
-                    <td>{formatDate(operation.created_at)}</td>
+                    <td>{row.detail}</td>
+                    <td>{formatDate(row.deletedAt || row.updatedAt)}</td>
                   </tr>
                 ))}
               </tbody>
