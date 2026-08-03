@@ -1,3 +1,9 @@
+/* Build-safe system font fallbacks */
+:root {
+  --font-geist-sans: Arial, Helvetica, system-ui, sans-serif;
+  --font-geist-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
 @import "tailwindcss";
 
 :root {
